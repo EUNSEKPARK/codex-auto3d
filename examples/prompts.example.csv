@@ -1,0 +1,5 @@
+개념,이름,프로파일,품질,뷰
+"빨간 장난감 로봇, 둥근 머리와 안테나, 네모난 몸통",toy-robot,generic,standard,"front, side"
+"나무로 만든 장난감 기차 (증기기관차, 굴뚝, 바퀴 4개)",toy-train,generic,standard,
+"파란 물뿌리개, 플라스틱, 손잡이와 긴 주둥이",watering-can,generic,draft,
+"동화책 주인공 소녀 캐릭터 전신, 노란 원피스, 빨간 장화",girl-character,character,standard,"front, back"

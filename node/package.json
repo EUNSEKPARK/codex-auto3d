@@ -1,0 +1,13 @@
+{
+  "name": "codex-auto3d-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Bundler + Three.js runtime used by codex-auto3d to render generated factories headlessly. Installed by `auto3d.py setup`; never required by the stdlib-only forge core.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "three": "0.185.1",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3",
+    "@types/three": "0.185.4"
+  }
+}

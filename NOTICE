@@ -1,0 +1,28 @@
+codex-auto3d
+Copyright 2026 PARK EUN
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Third-party material vendored in this repository
+--------------------------------------------------------------------------------
+
+vendor/img2threejs/
+    img2threejs — image-to-procedural-Three.js skill
+    Copyright 2026 hoainho
+    Licensed under the Apache License, Version 2.0
+    https://github.com/img2threejs/img2threejs
+
+    An unmodified copy of the upstream SKILL.md, README.md, CHANGELOG.md, forge/,
+    grimoire/, docs/, skills/ and scripts/ trees. The exact upstream commit, and a SHA-256 for every vendored
+    file, are recorded in vendor/img2threejs/VENDORED.json; the copy is refreshed
+    and verified with tools/sync_upstream.py. The upstream LICENSE is kept alongside
+    the copy at vendor/img2threejs/LICENSE.
+
+    The root-level forge, grimoire, docs, skills, scripts and SKILL.md entries are
+    symlinks into that directory, not separate copies.
+
+--------------------------------------------------------------------------------
+
+Runtime dependencies (three.js, esbuild, typescript, Playwright) are installed by
+`auto3d.py setup` into node/ and .venv/ and are not redistributed here.

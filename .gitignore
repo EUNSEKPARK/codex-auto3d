@@ -1,0 +1,24 @@
+# Toolchain installed by `auto3d.py setup` — never committed.
+.venv/
+node/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local settings (copy from auto3d.config.example.json)
+auto3d.config.json
+
+# Job outputs: every run writes a directory under work/auto3d/.
+work/
+
+# Runtime caches written inside the vendored skill (forge's spec-search index).
+vendor/img2threejs/.cache/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp

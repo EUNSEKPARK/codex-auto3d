@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: vendored skill matches its manifest
+        run: python3 tools/sync_upstream.py check
+      - name: orchestrator tests
+        working-directory: tests
+        env:
+          AUTO3D_SKIP_BROWSER_TESTS: "1"
+        run: python3 -m unittest -v
+      - name: vendored forge tests
+        run: python3 tools/vendored_forge_tests.py

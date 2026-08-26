@@ -1,0 +1,38 @@
+{
+  "_comment": "Copy to auto3d.config.json (same folder). Every key is optional; CLI flags and AUTO3D_* env vars override it.",
+
+  "codex_bin": "codex",
+  "model": "",
+  "reasoning_effort": "",
+  "sandbox": "workspace-write",
+  "network_in_sandbox": false,
+  "turn_timeout_min": 60,
+  "job_timeout_min": 300,
+
+  "prompt_author": "codex",
+  "style": "stylized 3D render, clean game-asset look",
+  "language": "ko",
+
+  "image_backend": "codex",
+  "image_model": "gpt-image-2",
+  "image_size": "1024x1024",
+  "image_quality": "high",
+  "image_attempts": 3,
+  "views": [],
+  "hero_azimuth": 35.0,
+  "hero_elevation": 15.0,
+
+  "profile": "auto",
+  "quality": "standard",
+  "complexity": "auto",
+  "max_review_turns": 12,
+  "max_corrections_per_pass": 3,
+  "max_corrections_total": 6,
+  "target_triangles": 60000,
+
+  "viewport": [900, 900],
+  "background": "#f2f2f2",
+  "device_pixel_ratio": 1.0,
+
+  "work_root": "work/auto3d"
+}
