@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="codex-auto3d 파이프라인 워크플로우 — 스테이지, 빌드 루프, forge 게이트 사다리">
+<title>codex-auto3d 워크플로우</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground: #e9ecf0;
+    --surface: #f8f9fb;
+    --surface-2: #dfe4ea;
+    --ink: #171a20;
+    --ink-2: #4c5462;
+    --ink-3: #79818f;
+    --rule: #c9d0d9;
+    --enforce: #24628f;
+    --enforce-fill: #d7e5f0;
+    --judge: #a04c2a;
+    --judge-fill: #f2e0d6;
+    --stop: #93302d;
+    --go: #276b4f;
+    --font-sans: "IBM Plex Sans KR", "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --font-cond: "IBM Plex Sans Condensed", "IBM Plex Sans KR", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #11141a;
+      --surface: #1a1f26;
+      --surface-2: #242b35;
+      --ink: #e7eaef;
+      --ink-2: #a9b2c0;
+      --ink-3: #79818f;
+      --rule: #333b47;
+      --enforce: #6da9dc;
+      --enforce-fill: #1b2c3b;
+      --judge: #df9068;
+      --judge-fill: #35231a;
+      --stop: #e0817a;
+      --go: #62b894;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #11141a;
+    --surface: #1a1f26;
+    --surface-2: #242b35;
+    --ink: #e7eaef;
+    --ink-2: #a9b2c0;
+    --ink-3: #79818f;
+    --rule: #333b47;
+    --enforce: #6da9dc;
+    --enforce-fill: #1b2c3b;
+    --judge: #df9068;
+    --judge-fill: #35231a;
+    --stop: #e0817a;
+    --go: #62b894;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  /* ---- title block ---- */
+  .titleblock {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    padding: 24px 26px;
+  }
+  .titleblock h1 {
+    font-family: var(--font-cond);
+    font-weight: 700;
+    font-size: clamp(28px, 5vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+    text-wrap: balance;
+  }
+  .titleblock p {
+    margin: 0;
+    color: var(--ink-2);
+    max-width: 60ch;
+  }
+  .stamp {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.9;
+    color: var(--ink-3);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .stamp b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---- sections ---- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .eyebrow {
+    font-family: var(--font-cond);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+  h2 {
+    font-family: var(--font-cond);
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1.25;
+    margin: -10px 0 0;
+    text-wrap: balance;
+  }
+  section > p { margin: 0; max-width: 68ch; color: var(--ink-2); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  /* ---- figures ---- */
+  figure {
+    margin: 0;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 22px 18px 0;
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  figcaption {
+    border-top: 1px solid var(--rule);
+    margin-top: 18px;
+    padding: 12px 6px 14px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  /* svg roles */
+  .box { fill: var(--surface); stroke: var(--rule); stroke-width: 1.2; }
+  .box-e { fill: var(--enforce-fill); stroke: var(--enforce); stroke-width: 1.2; }
+  .box-j { fill: var(--judge-fill); stroke: var(--judge); stroke-width: 1.2; }
+  .band { fill: none; stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .lbl { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--ink); }
+  .lbl-e { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--enforce); }
+  .lbl-j { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--judge); }
+  .sub { font-family: var(--font-sans); font-size: 11.5px; fill: var(--ink-3); }
+  .sub-i { font-family: var(--font-sans); font-size: 11.5px; fill: var(--ink-2); }
+  .file { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-2); }
+  .tag { font-family: var(--font-cond); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; fill: var(--ink-3); }
+  .flow { stroke: var(--ink-2); stroke-width: 1.4; fill: none; }
+  .flow-j { stroke: var(--judge); stroke-width: 1.6; fill: none; }
+  .drop { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 4; fill: none; }
+  .stripe-e { fill: var(--enforce); }
+  .stripe-j { fill: var(--judge); }
+
+  /* ---- legend ---- */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 26px; font-size: 13px; color: var(--ink-2); }
+  .legend span { display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 22px; height: 10px; border: 1px solid; flex: none; }
+  .sw-e { background: var(--enforce-fill); border-color: var(--enforce); }
+  .sw-j { background: var(--judge-fill); border-color: var(--judge); }
+
+  /* ---- gate ladder ---- */
+  .ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+  @media (min-width: 760px) { .ladder { grid-template-columns: 1fr 1fr; } }
+  .ladder li {
+    background: var(--surface);
+    padding: 9px 14px 9px 12px;
+    display: grid;
+    grid-template-columns: 26px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    border-left: 3px solid transparent;
+  }
+  .ladder li.e { border-left-color: var(--enforce); }
+  .ladder li.j { border-left-color: var(--judge); }
+  .ladder li.m { border-left-color: var(--ink-3); }
+  .ladder .n { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .ladder .k { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink); }
+  .ladder .d { display: block; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+  .only { font-family: var(--font-cond); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--judge); margin-left: 6px; }
+
+  /* ---- tables ---- */
+  .tables { display: grid; gap: 22px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .tables { grid-template-columns: 1.15fr 1fr; } }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  caption {
+    font-family: var(--font-cond);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    text-align: left;
+    padding-bottom: 8px;
+  }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 11.5px; color: var(--ink-3); font-family: var(--font-cond); letter-spacing: 0.08em; text-transform: uppercase; }
+  td.k { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+  td.v { font-family: var(--font-mono); font-size: 12.5px; color: var(--enforce); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.n { color: var(--ink-3); font-size: 12.5px; }
+
+  .foot { border-top: 1px solid var(--rule); padding-top: 18px; font-size: 12.5px; color: var(--ink-3); max-width: 70ch; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="titleblock">
+    <div>
+      <h1>codex-auto3d 워크플로우</h1>
+      <p>문장 하나 또는 레퍼런스 한 장이 리뷰를 통과한 Three.js 팩토리가 되기까지. 스크립트가 강제하고, 모델이 판단한다.</p>
+    </div>
+    <div class="stamp">
+      <b>v0.4.0</b><br>
+      auto3d.py<br>
+      + vendor/img2threejs<br>
+      2026-08-26
+    </div>
+  </header>
+
+  <section>
+    <p class="eyebrow">Figure 1 · End to end</p>
+    <h2>네 개의 스테이지</h2>
+    <div class="legend">
+      <span><i class="swatch sw-e"></i> 결정론적 스크립트 — 통과·실패가 숫자로 갈린다</span>
+      <span><i class="swatch sw-j"></i> Codex 턴 — 모델이 보고 판단한다</span>
+    </div>
+    <figure>
+      <svg viewBox="0 0 1000 392" role="img" aria-label="개념 문장 또는 공급된 레퍼런스가 prompt, image, build, report 네 스테이지를 거쳐 잡 디렉터리에 산출물을 남기는 흐름">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <!-- entries -->
+        <rect class="box" x="12" y="34" width="180" height="42"></rect>
+        <text class="lbl" x="24" y="52">run -p</text>
+        <text class="sub" x="24" y="68">개념 문장에서 시작</text>
+
+        <rect class="box" x="12" y="94" width="180" height="42"></rect>
+        <text class="lbl" x="24" y="112">run --reference</text>
+        <text class="sub" x="24" y="128">가진 그림에서 시작</text>
+
+        <g color="var(--ink-2)">
+          <path class="flow" d="M192,55 L204,55 L204,115 L192,115"></path>
+          <path class="flow" d="M204,85 L232,85" marker-end="url(#a1)"></path>
+          <path class="flow" d="M396,85 L428,85" marker-end="url(#a1)"></path>
+          <path class="flow" d="M592,85 L624,85" marker-end="url(#a1)"></path>
+          <path class="flow" d="M788,85 L820,85" marker-end="url(#a1)"></path>
+        </g>
+
+        <!-- stages -->
+        <rect class="box" x="236" y="59" width="160" height="52"></rect>
+        <rect class="stripe-j" x="236" y="59" width="160" height="3"></rect>
+        <text class="lbl" x="248" y="82">prompt</text>
+        <text class="sub" x="248" y="100">프롬프트 작성</text>
+
+        <rect class="box" x="432" y="59" width="160" height="52"></rect>
+        <rect class="stripe-j" x="432" y="59" width="80" height="3"></rect>
+        <rect class="stripe-e" x="512" y="59" width="80" height="3"></rect>
+        <text class="lbl" x="444" y="82">image</text>
+        <text class="sub" x="444" y="100">생성 · 입회 검사</text>
+
+        <rect class="box" x="628" y="59" width="160" height="52"></rect>
+        <rect class="stripe-j" x="628" y="59" width="80" height="3"></rect>
+        <rect class="stripe-e" x="708" y="59" width="80" height="3"></rect>
+        <text class="lbl" x="640" y="82">build</text>
+        <text class="sub" x="640" y="100">스펙 · 팩토리 · 리뷰</text>
+        <text class="tag" x="776" y="82" text-anchor="end">×N 턴</text>
+
+        <rect class="box" x="824" y="59" width="160" height="52"></rect>
+        <rect class="stripe-e" x="824" y="59" width="160" height="3"></rect>
+        <text class="lbl" x="836" y="82">report</text>
+        <text class="sub" x="836" y="100">리포트 · 갤러리</text>
+
+        <!-- drops -->
+        <path class="drop" d="M316,111 L316,196"></path>
+        <path class="drop" d="M512,111 L512,196"></path>
+        <path class="drop" d="M708,111 L708,196"></path>
+        <path class="drop" d="M904,111 L904,196"></path>
+
+        <!-- artifact band -->
+        <rect class="band" x="236" y="196" width="748" height="176"></rect>
+        <text class="tag" x="248" y="214">WORK/AUTO3D/&lt;JOB&gt;/</text>
+
+        <text class="file" x="248" y="240">prompt/prompt.json</text>
+        <text class="file" x="248" y="260">prompt/image_prompt.txt</text>
+        <text class="file" x="248" y="280">prompt/view_*.txt</text>
+
+        <text class="file" x="444" y="240">reference/hero.png</text>
+        <text class="file" x="444" y="260">reference/front.png</text>
+        <text class="file" x="444" y="280">reference/side.png</text>
+        <text class="file" x="444" y="300">reference/back.png</text>
+
+        <text class="file" x="640" y="240">object-sculpt-spec.json</text>
+        <text class="file" x="640" y="260">src/create*Model.ts</text>
+        <text class="file" x="640" y="280">preview/preview.html</text>
+        <text class="file" x="640" y="300">preview/cmp.png</text>
+        <text class="file" x="640" y="320">preview/gates/*.json</text>
+        <text class="file" x="640" y="340">evidence/*.md</text>
+
+        <text class="file" x="836" y="240">report.html</text>
+        <text class="file" x="836" y="260">../index.html</text>
+      </svg>
+      <figcaption><b>스테이지는 순서대로만 돈다.</b> 각 스테이지는 끝나면 <code>job.json</code>에 done으로 찍히고, <code>resume</code>은 done인 스테이지를 건너뛴다. 그래서 이미지까지 뽑아둔 잡은 나중에 빌드만 이어서 돌릴 수 있다. 위쪽 색 띠는 그 스테이지가 스크립트 판정인지 모델 판단인지를 나눈 것이다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="eyebrow">Figure 2 · stage build</p>
+    <h2>렌더와 리뷰를 번갈아 도는 루프</h2>
+    <p>빌드 스테이지 하나가 잡 시간의 대부분을 쓴다. Codex 스레드는 하나를 계속 <code>resume</code>하고, 파이프라인은 그 사이사이에 직접 렌더를 끼워 넣는다 — 모델이 자기 결과를 자기 말로 평가하지 못하게 하려는 구조다.</p>
+    <figure>
+      <svg viewBox="0 0 700 512" role="img" aria-label="turn 1이 스펙과 blockout 팩토리를 만들고, 파이프라인이 렌더하고, 리뷰 턴이 판정한 뒤 보정하면 다시 렌더로 돌아가는 루프. 완료·blocked·partial 세 갈래로 빠져나온다">
+        <defs>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <rect class="box-j" x="110" y="28" width="380" height="56"></rect>
+        <text class="lbl-j" x="126" y="52">turn 1</text>
+        <text class="sub-i" x="126" y="70">인테이크 → 스펙 작성 → blockout 팩토리</text>
+
+        <rect class="box-e" x="110" y="124" width="380" height="56"></rect>
+        <text class="lbl-e" x="126" y="148">preview</text>
+        <text class="sub-i" x="126" y="166">번들 · 프레이밍 보정 · 12뷰 캡처 (그림 3)</text>
+
+        <rect class="box-j" x="110" y="220" width="380" height="56"></rect>
+        <text class="lbl-j" x="126" y="244">turn N — 리뷰</text>
+        <text class="sub-i" x="126" y="262">tier1 · 멀티앵글 · 패스 게이트 · 리뷰 기록</text>
+
+        <g color="var(--ink-2)">
+          <path class="flow" d="M300,84 L300,120" marker-end="url(#a2)"></path>
+          <path class="flow" d="M300,180 L300,216" marker-end="url(#a2)"></path>
+          <path class="flow" d="M300,276 L300,300" marker-end="url(#a2)"></path>
+          <path class="flow" d="M300,384 L300,406"></path>
+          <path class="flow" d="M180,406 L620,406"></path>
+          <path class="flow" d="M190,406 L190,430" marker-end="url(#a2)"></path>
+          <path class="flow" d="M380,406 L380,430" marker-end="url(#a2)"></path>
+          <path class="flow" d="M570,406 L570,430" marker-end="url(#a2)"></path>
+        </g>
+
+        <!-- decision -->
+        <path class="box" d="M300,300 L382,342 L300,384 L218,342 z"></path>
+        <text class="sub-i" x="300" y="347" text-anchor="middle">판정</text>
+
+        <!-- loop back -->
+        <g color="var(--judge)">
+          <path class="flow-j" d="M382,342 L556,342 L556,152 L494,152" marker-end="url(#a2)"></path>
+        </g>
+        <text class="sub" x="566" y="240">보정 후</text>
+        <text class="sub" x="566" y="256">재렌더</text>
+
+        <!-- exits -->
+        <rect class="box" x="120" y="430" width="140" height="54"></rect>
+        <text class="lbl" x="132" y="452" style="fill: var(--go);">completed</text>
+        <text class="sub" x="132" y="470">목표 패스 도달</text>
+
+        <rect class="box" x="310" y="430" width="140" height="54"></rect>
+        <text class="lbl" x="322" y="452" style="fill: var(--stop);">blocked</text>
+        <text class="sub" x="322" y="470">보정 예산 소진</text>
+
+        <rect class="box" x="500" y="430" width="140" height="54"></rect>
+        <text class="lbl" x="512" y="452">partial</text>
+        <text class="sub" x="512" y="470">턴 · 시간 초과</text>
+      </svg>
+      <figcaption><b>루프가 도는 자리는 하나뿐이다</b> — 리뷰가 “고쳐야 한다”고 판정하면 모델이 스펙이나 팩토리를 고치고, 파이프라인이 다시 렌더한다. 지난 cheki 잡이 <code>blocked</code>으로 끝난 건 이 루프의 보정 예산이 3회였기 때문이고, 지금은 패스당 5회 · 전체 10회다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="eyebrow">Figure 3 · preview</p>
+    <h2>렌더 한 번에 일어나는 일</h2>
+    <figure>
+      <svg viewBox="0 0 940 176" role="img" aria-label="팩토리 타입스크립트를 esbuild로 번들하고, 프레이밍을 참조 이미지에 맞춰 보정한 뒤, 헤드리스 크로미움에서 12뷰를 캡처해 비교 시트와 게이트 결과를 남긴다">
+        <defs>
+          <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <rect class="box" x="8" y="46" width="140" height="58"></rect>
+        <text class="lbl" x="20" y="70">*.ts</text>
+        <text class="sub" x="20" y="88">패스별 팩토리</text>
+
+        <rect class="box-e" x="176" y="46" width="130" height="58"></rect>
+        <text class="lbl-e" x="188" y="70">esbuild</text>
+        <text class="sub" x="188" y="88">번들</text>
+
+        <rect class="box-e" x="334" y="46" width="212" height="58"></rect>
+        <text class="lbl-e" x="346" y="70">프레이밍 보정</text>
+        <text class="file" x="346" y="88" style="fill: var(--enforce);">margin ×= √(A_render / A_ref)</text>
+
+        <rect class="box-e" x="574" y="46" width="166" height="58"></rect>
+        <text class="lbl-e" x="586" y="70">Chromium</text>
+        <text class="sub" x="586" y="88">헤드리스 12뷰</text>
+
+        <rect class="box" x="768" y="46" width="164" height="58"></rect>
+        <text class="lbl" x="780" y="70">gates/</text>
+        <text class="sub" x="780" y="88">cmp.png · *.json</text>
+
+        <g color="var(--ink-2)">
+          <path class="flow" d="M148,75 L172,75" marker-end="url(#a3)"></path>
+          <path class="flow" d="M306,75 L330,75" marker-end="url(#a3)"></path>
+          <path class="flow" d="M546,75 L570,75" marker-end="url(#a3)"></path>
+          <path class="flow" d="M740,75 L764,75" marker-end="url(#a3)"></path>
+        </g>
+
+        <text class="tag" x="334" y="128">V0.3.0에서 추가된 단계</text>
+        <path class="drop" d="M334,116 L546,116"></path>
+      </svg>
+      <figcaption><b>프레이밍 보정이 tier1 게이트를 살린다.</b> 렌더 실루엣의 bbox 면적은 카메라 마진의 제곱에 반비례하므로, 한 번 찍어보고 면적비의 제곱근만큼 마진을 곱하면 참조와 크기가 맞는다. 하린 잡에서는 이 값이 <code>1.12 → 0.9xx</code>로 잡히고, 스케일 델타가 tier1 임계값 0.08 아래로 떨어진다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <p class="eyebrow">Inside one Codex turn</p>
+    <h2>forge 게이트 사다리</h2>
+    <p>턴 안에서 모델은 자유롭게 움직이지 못한다. <code>forge/next.py</code>가 다음에 할 일 하나만 알려주고, <code>forge/state.py mark</code>로 증거 파일을 붙여야 다음 칸이 열린다. 로그에서 보이는 <code>state.py mark …</code> 줄이 전부 이 사다리를 오르는 소리다.</p>
+    <ol class="ladder">
+      <li class="j"><span class="n">01</span><span><span class="k">image-analysis</span><span class="d">모델이 레퍼런스를 읽고 소견을 남긴다</span></span></li>
+      <li class="j"><span class="n">02</span><span><span class="k">reference-suitability</span><span class="d">이 그림으로 재구성이 가능한지 스스로 답한다</span></span></li>
+      <li class="e"><span class="n">03</span><span><span class="k">reference-admission</span><span class="d">probe_image + check_reference_admission</span></span></li>
+      <li class="j"><span class="n">04</span><span><span class="k">character-contract-read</span><span class="only">character</span><span class="d">캐릭터 계약 문서를 읽는다</span></span></li>
+      <li class="e"><span class="n">05</span><span><span class="k">character-landmarks</span><span class="only">character</span><span class="d">extract_landmarks.py — 머리·몸통 비율</span></span></li>
+      <li class="m"><span class="n">06</span><span><span class="k">pre-spec-assessment</span><span class="d">스크립트가 뼈대를 만들고 모델이 채운다</span></span></li>
+      <li class="e"><span class="n">07</span><span><span class="k">local-spec-search</span><span class="d">search_specs.py — 로컬 지식 검색</span></span></li>
+      <li class="m"><span class="n">08</span><span><span class="k">detail-inventory</span><span class="d">3×3 그리드 스캔 + 모델이 부품에 매핑</span></span></li>
+      <li class="e"><span class="n">09</span><span><span class="k">projection-route</span><span class="d">solve_camera_pose.py — 카메라 해</span></span></li>
+      <li class="m"><span class="n">10</span><span><span class="k">spec-authoring</span><span class="d">ObjectSculptSpec 작성</span></span></li>
+      <li class="j"><span class="n">11</span><span><span class="k">material-evidence</span><span class="d">재질 근거가 이 대상에 적용되는지</span></span></li>
+      <li class="m"><span class="n">12</span><span><span class="k">material-spec-wiring</span><span class="d">재질을 컴포넌트에 연결</span></span></li>
+      <li class="e"><span class="n">13</span><span><span class="k">strict-validation</span><span class="d">validate_sculpt_spec.py --strict-quality</span></span></li>
+      <li class="e"><span class="n">14</span><span><span class="k">build-current-pass</span><span class="d">generate_threejs_factory.py</span></span></li>
+      <li class="e"><span class="n">15</span><span><span class="k">render-capture</span><span class="d">파이프라인이 렌더를 끝내야 열린다</span></span></li>
+      <li class="j"><span class="n">16</span><span><span class="k">review-contract-read</span><span class="d">리뷰 계약을 읽는다</span></span></li>
+      <li class="e"><span class="n">17</span><span><span class="k">tier1-diagnostics</span><span class="d">diagnose_render.py — 실루엣·비율</span></span></li>
+      <li class="e"><span class="n">18</span><span><span class="k">multi-angle-review</span><span class="d">diagnose_render_multi_angle.py</span></span></li>
+      <li class="e"><span class="n">19</span><span><span class="k">pass-gate-check</span><span class="d">orchestrate_passes.py check</span></span></li>
+      <li class="j"><span class="n">20</span><span><span class="k">ai-review-recorded</span><span class="d">모델이 판정하고 append_review.py가 기록</span></span></li>
+      <li class="e"><span class="n">21</span><span><span class="k">pipeline-sync</span><span class="d">orchestrate_passes.py sync — 다음 패스로</span></span></li>
+    </ol>
+  </section>
+
+  <section>
+    <p class="eyebrow">Limits</p>
+    <h2>멈추는 조건과 통과하는 조건</h2>
+    <div class="tables">
+      <table>
+        <caption>예산 — auto3d.config.json</caption>
+        <thead><tr><th>설정</th><th>값</th><th>무엇을 막나</th></tr></thead>
+        <tbody>
+          <tr><td class="k">max_review_turns</td><td class="v">12</td><td class="n">리뷰 턴 총량</td></tr>
+          <tr><td class="k">max_corrections_per_pass</td><td class="v">5</td><td class="n">한 패스 안 재시도</td></tr>
+          <tr><td class="k">max_corrections_total</td><td class="v">10</td><td class="n">잡 전체 보정</td></tr>
+          <tr><td class="k">first_turn_timeout_min</td><td class="v">120</td><td class="n">1턴 — 인테이크+스펙</td></tr>
+          <tr><td class="k">turn_timeout_min</td><td class="v">60</td><td class="n">이후 각 턴</td></tr>
+          <tr><td class="k">job_timeout_min</td><td class="v">300</td><td class="n">잡 전체</td></tr>
+          <tr><td class="k">quality=standard</td><td class="v">material-pass</td><td class="n">여기까지 continue면 완료</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <caption>게이트 임계값</caption>
+        <thead><tr><th>검사</th><th>기준</th></tr></thead>
+        <tbody>
+          <tr><td class="k">전경 면적</td><td class="v">≥ 0.05</td></tr>
+          <tr><td class="k">짧은 변</td><td class="v">≥ 64 px</td></tr>
+          <tr><td class="k">최대 덩어리 비율</td><td class="v">≥ 0.60</td></tr>
+          <tr><td class="k">pHash 중복 거리</td><td class="v">&gt; 6</td></tr>
+          <tr><td class="k">뷰 간 pHash 거리</td><td class="v">&gt; 2</td></tr>
+          <tr><td class="k">tier1 스케일 델타</td><td class="v">≤ 0.08</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <p class="foot">빌드 패스 순서는 <code>blockout → structural-pass → form-refinement → material-pass → surface-pass → lighting-pass → interaction-pass → optimization-pass</code>이고, <code>--quality</code>가 어디까지 갈지를 정한다. draft는 form-refinement, standard는 material-pass, full은 끝까지.</p>
+
+</div>
+</body>
+</html>
