@@ -127,6 +127,38 @@ def handle_prompt_author(prompt: str, last: Path | None) -> int:
     )
 
 
+def handle_reference_intake(prompt: str, last: Path | None) -> int:
+    """`--reference`: the intake turn reads supplied images instead of authoring a prompt. The
+    camera is echoed when the operator pinned it and invented (badly, on purpose) otherwise, so
+    the tests can tell the two paths apart."""
+    pinned = re.search(r"captured at azimuth (-?[\d.]+)°, elevation (-?[\d.]+)°", prompt)
+    camera = {"azimuth": float(pinned.group(1)), "elevation": float(pinned.group(2))} if pinned else {"azimuth": 20, "elevation": 5}
+    return finish(
+        {
+            "subject_name": "Supplied Mascot",
+            "subject_slug": "supplied-mascot",
+            "profile": "character",
+            "complexity": "moderate",
+            "image_prompt": (
+                "Use case: supplied-reference\nAsset type: 3D reconstruction reference image\n"
+                "Primary request: rebuild the mascot shown in the supplied reference\n"
+                "Scene/backdrop: plain light-grey plate\nSubject: rounded mascot with a flame-shaped head\n"
+                "Style/medium: stylized vinyl toy render\nComposition/framing: single centred subject\n"
+                "Lighting/mood: soft even studio lighting\nColor palette: red, off-white\n"
+                "Materials/textures: matte vinyl\nConstraints: one subject\nAvoid: inventing hidden detail"
+            ),
+            "view_prompts": {"front": None, "side": None, "back": None, "top": None},
+            "camera": camera,
+            "identity_features": ["flame-shaped head", "belly emblem", "stubby limbs"],
+            "materials": ["matte vinyl"],
+            "avoid": ["invented rear detail"],
+            "notes_ko": "공급된 참조 이미지를 읽어 정리했습니다.",
+        },
+        last,
+        {"input_tokens": 1500, "cached_input_tokens": 0, "output_tokens": 420},
+    )
+
+
 def handle_imagegen(prompt: str, last: Path | None) -> int:
     match = re.search(r"^TARGET: (\S+)", prompt, re.MULTILINE)
     if not match:
@@ -278,6 +310,8 @@ def main(argv: list[str]) -> int:
             emit({"type": "error", "message": f"attached image missing: {image}"})
     if "You are the prompt author" in prompt:
         return handle_prompt_author(prompt, last)
+    if "You are the intake analyst" in prompt:
+        return handle_reference_intake(prompt, last)
     if "$imagegen" in prompt:
         return handle_imagegen(prompt, last)
     if "You are running the img2threejs skill UNATTENDED" in prompt:

@@ -132,7 +132,22 @@ class Pipeline:
                     return {"azimuth": float(camera["azimuth"]), "elevation": float(camera["elevation"])}
             except (ValueError, TypeError):
                 pass
+        pinned = self.job.state.get("referenceCamera")
+        if isinstance(pinned, dict) and "azimuth" in pinned and "elevation" in pinned:
+            # a supplied reference was shot by someone else; the operator's measurement wins over
+            # the settings default, which only describes images this pipeline generates itself
+            return {"azimuth": float(pinned["azimuth"]), "elevation": float(pinned["elevation"])}
         return {"azimuth": float(self.settings.hero_azimuth), "elevation": float(self.settings.hero_elevation)}
+
+    @property
+    def reference_inputs(self) -> dict[str, str]:
+        """Supplied reference files, {"hero": path, "front": path, …}, empty in concept mode."""
+        value = self.job.state.get("referenceInputs")
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
+    def reference_mode(self) -> bool:
+        return bool(self.reference_inputs.get("hero"))
 
     def _time_left(self) -> float:
         return self.settings.job_timeout_min * 60 - self.clock.elapsed()
@@ -182,19 +197,36 @@ class Pipeline:
         record.update({"status": "running", "startedAt": now_iso()})
         self.job.save()
         concept = self.job.state["concept"]
-        views = list(self.settings.views)
+        supplied = self.reference_inputs
+        reference_mode = self.reference_mode
+        supplied_views = [name for name in supplied if name != "hero"]
+        views = supplied_views if reference_mode else list(self.settings.views)
         data: dict[str, Any] | None = None
-        if self.settings.prompt_author == "codex":
-            log("stage prompt: asking Codex to write the 3D-friendly image prompt")
+        images: list[Path] = []
+        if self.settings.prompt_author == "codex" or reference_mode:
             schema_path = schemas.write_schema(schemas.PROMPT_SCHEMA, self.codex_dir / "schemas" / "prompt.schema.json")
-            text = prompts.prompt_author(
-                concept,
-                style=self.settings.style,
-                profile_hint=self.settings.profile,
-                complexity_hint=self.settings.complexity,
-                hero_camera=self.hero_camera,
-                views=views,
-            )
+            if reference_mode:
+                # nothing to generate: the turn reads the supplied images and reports what they show
+                log(f"stage prompt: asking Codex to read the supplied reference ({len(supplied)} image(s))")
+                images = [Path(supplied["hero"])] + [Path(supplied[name]) for name in supplied_views]
+                text = prompts.reference_intake(
+                    concept,
+                    hero_camera=self.hero_camera,
+                    camera_pinned=isinstance(self.job.state.get("referenceCamera"), dict),
+                    supplied_views=supplied_views,
+                    profile_hint=self.settings.profile,
+                    complexity_hint=self.settings.complexity,
+                )
+            else:
+                log("stage prompt: asking Codex to write the 3D-friendly image prompt")
+                text = prompts.prompt_author(
+                    concept,
+                    style=self.settings.style,
+                    profile_hint=self.settings.profile,
+                    complexity_hint=self.settings.complexity,
+                    hero_camera=self.hero_camera,
+                    views=views,
+                )
             result = run_codex(
                 self.settings,
                 text,
@@ -202,6 +234,7 @@ class Pipeline:
                 events_path=self.codex_dir / "prompt.events.jsonl",
                 last_message_path=self.codex_dir / "prompt.last.json",
                 prompt_path=self.codex_dir / "prompt.prompt.md",
+                images=images or None,
                 output_schema=schema_path,
                 sandbox="read-only",
                 network=False,
@@ -218,16 +251,35 @@ class Pipeline:
                 log(f"prompt JSON has schema issues ({problems[:3]}); using it anyway", level="warn")
                 data = _fill_prompt_defaults(candidate, views)
             else:
-                log("Codex did not return a usable prompt; falling back to the template author", level="warn")
+                fallback = "a minimal stub" if reference_mode else "the template author"
+                log(f"Codex did not return a usable prompt; falling back to {fallback}", level="warn")
                 record.setdefault("warnings", []).append(f"codex prompt author failed: {problems[:3]} / {result.errors[-1:]}")
         if data is None:
-            data = prompts.template_prompt(concept, style=self.settings.style, hero_camera=self.hero_camera, views=views)
-            data["subject_slug"] = slugify(data["subject_name"])
-            data["author"] = "template"
+            if reference_mode:
+                data = _stub_reference_prompt(concept, self.job.state.get("name"), views)
+                data["author"] = "stub"
+            else:
+                data = prompts.template_prompt(concept, style=self.settings.style, hero_camera=self.hero_camera, views=views)
+                data["subject_slug"] = slugify(data["subject_name"])
+                data["author"] = "template"
         else:
             data["author"] = "codex"
-        # the orchestrator owns the camera numbers (they drive the hero capture)
-        data["camera"] = dict(self.hero_camera)
+        # the orchestrator owns the camera numbers (they drive the hero capture). For a supplied
+        # reference nobody here chose the camera, so an operator measurement wins, and otherwise the
+        # intake turn's estimate does — the settings default only describes images we generate.
+        if reference_mode and not isinstance(self.job.state.get("referenceCamera"), dict):
+            estimate = data.get("camera") if isinstance(data.get("camera"), dict) else {}
+            try:
+                camera = {"azimuth": float(estimate["azimuth"]), "elevation": float(estimate["elevation"])}
+            except (KeyError, TypeError, ValueError):
+                camera = dict(self.hero_camera)
+                log("stage prompt: no camera estimate for the reference; using the default hero framing", level="warn")
+            else:
+                log(f"stage prompt: hero camera read off the reference — azimuth {camera['azimuth']:.0f}°, elevation {camera['elevation']:.0f}°")
+            self.job.state["referenceCamera"] = camera
+            data["camera"] = camera
+        else:
+            data["camera"] = dict(self.hero_camera)
         if self.settings.profile != "auto":
             data["profile"] = self.settings.profile
         if self.settings.complexity != "auto":
@@ -273,6 +325,9 @@ class Pipeline:
         record = self.job.stage("image")
         record.update({"status": "running", "startedAt": now_iso(), "attempts": record.get("attempts", [])})
         self.job.save()
+        if self.reference_mode:
+            self._adopt_reference(record)
+            return
         data = self.prompt_data
         hero_path = self.job.path("reference", "hero.png")
         hero_path.parent.mkdir(parents=True, exist_ok=True)
@@ -390,6 +445,110 @@ class Pipeline:
         record["views"] = views
         record.update({"status": "done", "finishedAt": now_iso()})
         self.job.save()
+
+    def _adopt_reference(self, record: dict[str, Any]) -> None:
+        """`--reference`: the images already exist, so nothing is generated. Each supplied file is
+        copied into the job and put through the same admission gate, and the stage record ends up
+        in the same shape the generated path produces — from here on the build stage cannot tell
+        the two apart. A rejected hero is a warning, not a failure: it is the operator's image and
+        there is nothing to retry, so the reasons are recorded and the build turn sees them too."""
+        supplied = self.reference_inputs
+        hero_source = Path(supplied["hero"])
+        hero_path = self._copy_reference(hero_source, "hero")
+        probe = imagegen.probe_image(hero_path)
+        verdict = imagegen.check_admission(hero_path)
+        record["attempts"].append(
+            {
+                "attempt": 1,
+                "backend": "supplied",
+                "source": str(hero_source),
+                "probe": {key: probe.get(key) for key in ("type", "width", "height", "bytes", "technicalSuitability", "warnings")},
+                "admission": verdict,
+            }
+        )
+        provenance = verdict.get("provenance") or {}
+        if verdict.get("admitted"):
+            log(
+                f"stage image: supplied hero admitted ({probe.get('width')}x{probe.get('height')}, "
+                f"coverage {provenance.get('foregroundCoverage')})",
+                level="ok",
+            )
+        else:
+            reasons = verdict.get("reasons") or []
+            log(f"stage image: supplied hero fails the admission gate ({reasons}); continuing with it anyway", level="warn")
+            record.setdefault("warnings", []).append(f"hero admission: {reasons}")
+        imagegen.save_record(
+            imagegen.ImageRecord(
+                path=hero_path,
+                backend="supplied",
+                model=None,
+                size=f"{probe.get('width')}x{probe.get('height')}",
+                prompt_used=str(self.prompt_data.get("image_prompt") or "").strip(),
+                notes=[f"supplied by the operator: {hero_source}"],
+            ),
+            self.job.path("reference", "hero.json"),
+        )
+        record["hero"] = relpath(hero_path)
+        record["heroAdmitted"] = bool(verdict.get("admitted"))
+        record["heroHash"] = provenance.get("pHash")
+        record["backend"] = "supplied"
+        self.job.state["artifacts"]["hero"] = relpath(hero_path)
+
+        views: dict[str, str] = {}
+        admitted_hashes: list[int] = [value for value in [record.get("heroHash")] if isinstance(value, int)]
+        for view in [name for name in supplied if name != "hero"]:
+            source = Path(supplied[view])
+            out = self._copy_reference(source, view)
+            view_verdict = imagegen.check_admission(out, viewpoint=view)
+            view_hash = (view_verdict.get("provenance") or {}).get("pHash")
+            distance = min((hamming(view_hash, other) for other in admitted_hashes), default=None) if isinstance(view_hash, int) else None
+            view_verdict["hammingToAdmitted"] = distance
+            if view_verdict.get("admitted") and distance is not None and distance <= NEAR_IDENTICAL_BITS:
+                view_verdict["admitted"] = False
+                view_verdict.setdefault("reasons", []).append(f"near-identical to an admitted reference (pHash distance {distance})")
+            record.setdefault("viewAdmission", {})[view] = view_verdict
+            imagegen.save_record(
+                imagegen.ImageRecord(
+                    path=out,
+                    backend="supplied",
+                    model=None,
+                    size=None,
+                    prompt_used="",
+                    notes=[f"supplied by the operator: {source}"],
+                ),
+                self.job.path("reference", f"{view}.json"),
+            )
+            if view_verdict.get("admitted"):
+                views[view] = relpath(out)
+                if isinstance(view_hash, int):
+                    admitted_hashes.append(view_hash)
+                log(f"stage image: supplied view '{view}' admitted", level="ok")
+            else:
+                log(f"stage image: supplied view '{view}' rejected ({view_verdict.get('reasons')}); it will not be used", level="warn")
+        record["views"] = views
+        record.update({"status": "done", "finishedAt": now_iso()})
+        self.job.save()
+
+    def _copy_reference(self, source: Path, name: str) -> Path:
+        """Copy a supplied image into the job's reference/ directory, keeping its real format.
+        Only PNG and JPEG are accepted — the forge intake scripts read those two."""
+        if not source.is_file():
+            # a resume after the operator moved or deleted the original: the job's own copy stands in
+            for existing in (self.job.path("reference", f"{name}.png"), self.job.path("reference", f"{name}.jpg")):
+                if existing.is_file():
+                    log(f"stage image: {source} is gone; reusing the copy already in the job ({relpath(existing)})", level="warn")
+                    return existing
+            raise Auto3DError(f"reference image not found: {source}")
+        if imagegen.is_png(source):
+            suffix = ".png"
+        elif imagegen.is_jpeg(source):
+            suffix = ".jpg"
+        else:
+            raise Auto3DError(f"reference must be a PNG or JPEG file: {source}")
+        target = self.job.path("reference", f"{name}{suffix}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        return target
 
     # ------------------------------------------------------------------ stage: build
     def stage_build(self) -> None:
@@ -839,6 +998,27 @@ def _gate_verdict(gate: Any) -> Any:
     if "ok" in gate:
         return "PASS" if gate.get("ok") else ("FAIL" if gate.get("ok") is False else "n/a")
     return "ERROR"
+
+
+def _stub_reference_prompt(concept: str, name: str | None, views: list[str]) -> dict[str, Any]:
+    """Minimal prompt.json for the `--reference` path when no intake turn ran (prompt_author=
+    template, or the intake turn failed). The build turn still reads the images itself, so this
+    only has to name the subject and stay out of the way — it must not invent identity features."""
+    subject = (name or concept or "Supplied Reference").strip()[:80]
+    return _fill_prompt_defaults(
+        {
+            "subject_name": subject,
+            "subject_slug": slugify(subject),
+            "image_prompt": (
+                "Use case: supplied-reference\n"
+                "Asset type: 3D reconstruction reference image\n"
+                f"Primary request: rebuild the subject shown in the supplied reference image(s){f' ({subject})' if subject else ''}.\n"
+                "Note: no intake description was produced — read the attached reference images directly.\n"
+            ),
+            "notes_ko": "참조 이미지를 그대로 사용했고, 인테이크 분석 턴은 실행되지 않았습니다.",
+        },
+        views,
+    )
 
 
 def _fill_prompt_defaults(data: dict[str, Any], views: list[str]) -> dict[str, Any]:

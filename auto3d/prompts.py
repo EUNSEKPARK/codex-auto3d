@@ -89,6 +89,84 @@ Return only the JSON object.
 """
 
 
+def reference_intake(
+    concept: str,
+    *,
+    hero_camera: dict[str, float],
+    camera_pinned: bool,
+    supplied_views: list[str],
+    profile_hint: str,
+    complexity_hint: str,
+) -> str:
+    """Prompt for the `--reference` path: the images already exist, so this turn reads them
+    instead of authoring a generation prompt. It fills the same PROMPT_SCHEMA so every later
+    stage is identical to the generated-reference path."""
+    attached = ["1. the hero reference (the view the render is compared against)"]
+    for index, view in enumerate(supplied_views, start=2):
+        attached.append(f"{index}. the {view} view — {VIEW_DESCRIPTIONS.get(view, view)}")
+    camera_line = (
+        f"The hero reference was captured at azimuth {hero_camera['azimuth']:.0f}°, elevation "
+        f"{hero_camera['elevation']:.0f}° (the operator measured it). Echo those exact numbers in `camera`."
+        if camera_pinned
+        else (
+            "Estimate the hero reference's camera and put it in `camera`: azimuth 0° means the camera "
+            "faces the subject's front, positive azimuth walks the camera toward the subject's own LEFT "
+            "(so a three-quarter view showing the front and the subject's left side is roughly +35°, the "
+            "subject's left profile is +90°, the back is 180°); elevation is degrees above the subject's "
+            "mid-height. Round to the nearest 5°."
+        )
+    )
+    concept_line = (
+        f"Operator's note about the subject (a hint, not the truth — the images are the truth):\n\"\"\"{concept.strip()}\"\"\"\n"
+        if concept.strip()
+        else ""
+    )
+    return f"""\
+You are the intake analyst for an automated image → 3D pipeline. The reference images ALREADY
+EXIST and are attached to this turn:
+{chr(10).join(attached)}
+
+Do NOT generate any image, do NOT edit any file, and do NOT run commands. Your only output is the
+JSON object described by the output schema.
+
+{concept_line}Profile hint: {profile_hint}  (auto = decide: 'character' for humanoid/creature figures, else 'generic')
+Complexity hint: {complexity_hint}  (auto = estimate simple|moderate|complex|ultra-complex from what you see)
+
+{camera_line}
+
+Fill `image_prompt` with a faithful DESCRIPTION of the attached hero reference — not an invented
+scene. It is kept as the record of what the model is being asked to rebuild, and it is what a
+missing view would be regenerated from, so describe only what is actually visible, using the same
+labeled scaffold (one label per line):
+
+Use case: supplied-reference
+Asset type: 3D reconstruction reference image
+Primary request: <one sentence naming the subject>
+Scene/backdrop: <the actual backdrop of the supplied image>
+Subject: <parts, proportions, colours — read them off the image, count what can be counted>
+Style/medium: <the actual rendering style of the supplied image>
+Composition/framing: <how the subject sits in the frame, and the camera as given above>
+Lighting/mood: <the actual lighting>
+Color palette: <3-6 named colours sampled from the image>
+Materials/textures: <each visible material in PBR words: matte/satin/gloss, plastic/painted metal/…>
+Constraints: <what the rebuild must preserve>
+Avoid: <what must not be invented>
+
+Set every `view_prompts` entry to null for a view that is attached (it already exists); write a
+prompt only for a view that is missing and would help.
+
+Also fill: subject_name (short English display name), subject_slug (kebab-case ASCII), profile,
+complexity, identity_features (3-8 things the 3D model must reproduce for the result to read as
+this exact subject — silhouette shapes, part counts, colour blocks, distinctive markings),
+materials (PBR terms), avoid (list), notes_ko (Korean, 1-3 sentences on what will be hard to
+reconstruct from these views).
+
+Be precise about anything the reconstruction can get wrong: how many limbs and of what shape,
+whether parts are separate or fused, where a marking sits, what is symmetric and what is not.
+Return only the JSON object.
+"""
+
+
 def template_prompt(concept: str, *, style: str, hero_camera: dict[str, float], views: list[str]) -> dict[str, Any]:
     """Deterministic, LLM-free fallback for --prompt-author template."""
     subject = concept.strip()

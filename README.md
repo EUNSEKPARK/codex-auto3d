@@ -95,6 +95,39 @@ python3 auto3d.py preview --factory path/to/createFooModel.ts --reference ref.pn
 python3 auto3d.py gallery
 ```
 
+### From an image you already have
+
+When the subject already exists — concept art, a turnaround sheet, a product photo — `--reference`
+skips generation and feeds your file into the same loop. The intake turn reads the image instead of
+authoring a prompt for one, so it costs one Codex turn and no image credits.
+
+```bash
+# a turnaround sheet → one reference per view (cut, flatten, frame; standard library only)
+python3 tools/prepare_reference.py sheet.png --split --out work/refs            # writes contact.png
+python3 tools/prepare_reference.py sheet.png --split --out work/refs \
+    --views front,hero,side,back,skip
+
+python3 auto3d.py run --reference work/refs/hero.png \
+    --view front=work/refs/front.png --view side=work/refs/side.png --view back=work/refs/back.png \
+    --reference-camera 35,0 --profile character --quality standard
+```
+
+`--reference` takes a PNG or JPEG; `--view NAME=PATH` (front|side|back|top) adds the other angles,
+and each goes through the same admission gate as a generated reference — a view that is a
+near-duplicate of the hero is dropped rather than handed to the model as an angle it is not.
+`--reference-camera AZ,EL` states the hero's camera in degrees (azimuth 0 = straight on, positive
+walks the camera toward the subject's own left, so a three-quarter from its left is `35,0`); leave
+it out and the intake turn estimates it. A supplied hero that fails admission is a warning, not a
+stop — it is your image and there is nothing to regenerate, so the reasons are recorded and the
+build continues with them visible.
+
+`tools/prepare_reference.py` is what makes delivered art usable: it cuts a sheet into figures,
+flattens transparency onto the pipeline's own backdrop, and frames every figure on one canvas at
+**one scale with a common baseline** — fitting each figure separately would quietly change the
+subject's proportions between views and the reconstruction would inherit that error. Run it with
+`--split` and no `--views` first; it writes a contact sheet and prints the command to run once you
+have named the figures left to right.
+
 `--quality` maps to the last pass that must be reviewed `continue`: `draft` → `form-refinement`,
 `standard` → `material-pass`, `full` → `optimization-pass` (or pass any pass id).
 

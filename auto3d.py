@@ -3,7 +3,8 @@
 
     python3 auto3d.py setup            # one-time: node runtime + Playwright
     python3 auto3d.py doctor           # check codex login, toolchain, skill
-    python3 auto3d.py run --prompt "빨간 장난감 로봇"
+    python3 auto3d.py run --prompt "빨간 장난감 로봇"          # concept → image → 3D
+    python3 auto3d.py run --reference art.png --view side=side.png   # your own image → 3D
     python3 auto3d.py batch --file prompts.csv
     python3 auto3d.py resume --job work/auto3d/<job>
     python3 auto3d.py preview --job work/auto3d/<job>
@@ -30,7 +31,7 @@ sys.path.insert(0, str(HERE))
 from auto3d import __version__  # noqa: E402
 from auto3d.batch import parse_batch_file  # noqa: E402
 from auto3d.codex import codex_home, codex_version, login_status  # noqa: E402
-from auto3d.config import CONFIG_FILE, DEFAULTS, PASS_ORDER, Settings, load_settings  # noqa: E402
+from auto3d.config import CONFIG_FILE, DEFAULTS, PASS_ORDER, VIEW_CAMERAS, Settings, load_settings  # noqa: E402
 from auto3d.jobs import create_job, list_jobs, load_job  # noqa: E402
 from auto3d.pipeline import Pipeline, describe_job  # noqa: E402
 from auto3d.preview import NODE_DIR, VENV_DIR, esbuild_bin, playwright_python, render_factory, three_installed, tsc_bin  # noqa: E402
@@ -228,22 +229,86 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
-def _run_one(settings: Settings, concept: str, name: str | None, stage_until: str | None) -> tuple[str, str]:
-    job = create_job(settings, concept, name=name)
+def _run_one(
+    settings: Settings,
+    concept: str,
+    name: str | None,
+    stage_until: str | None,
+    *,
+    reference_inputs: dict[str, str] | None = None,
+    reference_camera: dict[str, float] | None = None,
+) -> tuple[str, str]:
+    extra: dict[str, object] = {}
+    if reference_inputs:
+        extra["referenceInputs"] = reference_inputs
+        if reference_camera:
+            extra["referenceCamera"] = reference_camera
+    job = create_job(settings, concept, name=name, extra=extra or None)
     set_log_file(job.path("auto3d.log"))
-    log(f"job {job.id} created for concept: {concept}")
+    if reference_inputs:
+        supplied = ", ".join(f"{view}={Path(path).name}" for view, path in reference_inputs.items())
+        log(f"job {job.id} created from supplied reference: {supplied}")
+    else:
+        log(f"job {job.id} created for concept: {concept}")
     pipeline = Pipeline(settings, job)
     status = pipeline.run(until=stage_until)
     print("\n" + describe_job(job) + "\n")
     return status, str(job.dir)
 
 
+def _reference_inputs(args: argparse.Namespace) -> tuple[dict[str, str], dict[str, float] | None]:
+    """Parse --reference / --view NAME=PATH / --reference-camera into job state. The hero comes
+    first so the intake turn sees it as image 1."""
+    if not getattr(args, "reference", None):
+        if getattr(args, "view", None):
+            raise Auto3DError("--view needs --reference (the hero image those views belong to)")
+        if getattr(args, "reference_camera", None):
+            raise Auto3DError("--reference-camera only applies together with --reference")
+        return {}, None
+    hero = Path(args.reference).expanduser().resolve()
+    if not hero.is_file():
+        raise Auto3DError(f"--reference file not found: {hero}")
+    inputs = {"hero": str(hero)}
+    for item in getattr(args, "view", None) or []:
+        view, _, raw = str(item).partition("=")
+        view = view.strip()
+        if not raw.strip():
+            raise Auto3DError(f"--view expects NAME=PATH, got {item!r}")
+        if view == "hero" or view not in VIEW_CAMERAS:
+            choices = ", ".join(name for name in VIEW_CAMERAS if name != "hero")
+            raise Auto3DError(f"unknown view {view!r}; choose from {choices}")
+        path = Path(raw.strip()).expanduser().resolve()
+        if not path.is_file():
+            raise Auto3DError(f"--view {view} file not found: {path}")
+        inputs[view] = str(path)
+    camera = None
+    if getattr(args, "reference_camera", None):
+        parts = [part.strip() for part in str(args.reference_camera).replace("/", ",").split(",") if part.strip()]
+        if len(parts) != 2:
+            raise Auto3DError("--reference-camera expects AZ,EL in degrees, e.g. --reference-camera 35,0")
+        try:
+            camera = {"azimuth": float(parts[0]), "elevation": float(parts[1])}
+        except ValueError as exc:
+            raise Auto3DError(f"--reference-camera is not a pair of numbers: {args.reference_camera!r}") from exc
+    return inputs, camera
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     settings = settings_for(args)
+    reference_inputs, reference_camera = _reference_inputs(args)
     concept = args.prompt or (args.prompt_file.read_text(encoding="utf-8").strip() if args.prompt_file else "")
-    if not concept:
-        raise Auto3DError("provide --prompt \"...\" or --prompt-file")
-    status, _ = _run_one(settings, concept, args.name, args.until)
+    if not concept and not reference_inputs:
+        raise Auto3DError("provide --prompt \"...\", --prompt-file, or --reference IMAGE")
+    if reference_inputs and settings.views:
+        log("--views asks the pipeline to generate extra views; with --reference use --view NAME=PATH instead", level="warn")
+    status, _ = _run_one(
+        settings,
+        concept,
+        args.name,
+        args.until,
+        reference_inputs=reference_inputs,
+        reference_camera=reference_camera,
+    )
     return 0 if status in {"completed", "partial"} else 1
 
 
@@ -423,6 +488,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_overrides(run)
     run.add_argument("--prompt", "-p", help="concept text (Korean or English)")
     run.add_argument("--prompt-file", type=Path, help="read the concept from a text file")
+    run.add_argument("--reference", type=Path, help="build from an image you already have instead of generating one (PNG/JPEG)")
+    run.add_argument(
+        "--view",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="extra supplied reference view, repeatable: --view front=front.png --view side=side.png (front|side|back|top)",
+    )
+    run.add_argument("--reference-camera", dest="reference_camera", metavar="AZ,EL", help="camera of --reference in degrees, e.g. 35,0 (default: the intake turn estimates it)")
     run.add_argument("--name", help="job name / directory slug")
     run.add_argument("--until", choices=["prompt", "image", "build", "report"], help="stop after this stage (e.g. --until image)")
     run.set_defaults(func=cmd_run)

@@ -95,6 +95,36 @@ python3 auto3d.py run -p "파란 물뿌리개" --until image
 python3 auto3d.py resume --job work/auto3d/20260825-1530-blue-watering-can
 ```
 
+### 가지고 있는 이미지로 만들기 (`--reference`)
+
+캐릭터 원화·턴어라운드 시트·제품 사진처럼 **이미 이미지가 있을 때**는 생성 단계를 건너뛰고 그
+파일을 그대로 참조로 넣습니다. 인테이크 턴이 이미지를 "읽어서" 피사체·프로파일·복잡도·정체성
+특징을 정리하므로, Codex 턴 1회만 쓰고 이미지 크레딧은 들지 않습니다.
+
+```bash
+# 1) 턴어라운드 시트를 뷰별 참조로 자르기 (도형 분리 → 투명 배경 합성 → 공통 스케일로 배치)
+python3 tools/prepare_reference.py sheet.png --split --out work/refs          # contact.png 확인
+python3 tools/prepare_reference.py sheet.png --split --out work/refs \
+    --views front,hero,side,back,skip
+
+# 2) 그 참조로 3D 빌드
+python3 auto3d.py run --reference work/refs/hero.png \
+    --view front=work/refs/front.png --view side=work/refs/side.png --view back=work/refs/back.png \
+    --reference-camera 35,0 --profile character --quality standard
+```
+
+- `--reference` 는 PNG/JPEG 한 장(대표 뷰), `--view 이름=경로` 는 추가 뷰(front|side|back|top)이며
+  반복해서 줄 수 있습니다. 각 뷰는 생성 이미지와 똑같은 admission 게이트를 통과해야 하고, hero와
+  사실상 같은 그림이면 "새 각도가 아니다"라고 판단해 제외합니다.
+- `--reference-camera 방위각,고도` 는 대표 뷰의 카메라(도 단위)입니다. 0°는 정면, 양수는 카메라가
+  피사체의 **왼쪽**으로 도는 방향이라 3/4 뷰는 보통 `35,0`. 생략하면 인테이크 턴이 추정합니다.
+- 넣어준 hero가 admission에서 탈락해도 중단하지 않습니다(다시 만들 수 없는 사용자 이미지이므로).
+  탈락 사유를 기록하고 그대로 진행합니다.
+- `tools/prepare_reference.py` 는 시트를 도형별로 자르고, 투명 배경을 파이프라인 기본 배경(#f2f2f2)
+  으로 합성하고, **모든 뷰를 하나의 배율·같은 바닥선**으로 배치합니다. 뷰마다 따로 맞추면 뷰 간
+  비율이 달라지고 그 오차가 그대로 3D에 들어갑니다. `--views` 없이 `--split` 만 주면 contact.png와
+  다음에 실행할 명령을 출력하니, 그림을 보고 왼쪽부터 이름을 붙이면 됩니다.
+
 ### 배치 실행 (CSV / 엑셀 / 텍스트 / JSON)
 
 ```bash

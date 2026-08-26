@@ -3,6 +3,24 @@
 All notable changes to codex-auto3d. Format loosely follows Keep a Changelog; versions are the
 `__version__` in `auto3d/__init__.py`.
 
+## [0.2.0] — 2026-08-26
+
+### Added
+
+- `run --reference IMAGE` builds from an image you already have instead of generating one:
+  the prompt stage becomes an intake turn that *reads* the supplied images (subject, profile,
+  complexity, identity features, and a camera estimate) and the image stage adopts the files
+  instead of calling `$imagegen`. `--view NAME=PATH` (front|side|back|top, repeatable) supplies
+  the other angles, and `--reference-camera AZ,EL` pins the hero camera when you know it.
+  Every supplied file goes through the same admission and near-duplicate gates as a generated
+  one; a hero that fails is reported and kept, since there is nothing to regenerate.
+- `tools/prepare_reference.py`: turns delivered art into admissible references — splits a
+  turnaround sheet into figures, flattens transparency onto the pipeline backdrop, and frames
+  every figure on one canvas at a single scale with a common baseline. Standard library only
+  (it reads and writes PNG/JPEG through the vendored forge decoders).
+- Tests for the supplied-reference path, including a full build from one, and a fake-Codex
+  intake handler.
+
 ## [0.1.0] — 2026-08-25
 
 First release as a standalone repository.
