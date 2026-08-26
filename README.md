@@ -171,6 +171,26 @@ Budgets: `max_review_turns` (default 12), `state.py --max-per-pass 5 --max-total
 timeout plus a larger `first_turn_timeout_min` for the intake/spec turn, and a per-job timeout. Exhaustion ends in a final review-only turn and a `partial`/`blocked` job, never a
 silent stop. A `blocked` before any factory exists gets one automatic "deepen the spec" retry.
 
+## Making it talk
+
+`lipsync/` turns a line of Korean into audio plus a mouth-shape timeline, which is what a
+generated model needs before it can speak.
+
+```bash
+export TYPECAST_API_KEY=...
+python3 tools/lipsync.py voices --filter 진서
+python3 tools/lipsync.py say --voice 65bb3a1976b69213594357fc \
+    --text "안녕하세요, 오늘도 좋은 하루 보내세요." --out work/speech/greeting
+```
+
+Typecast's `/v1/text-to-speech/with-timestamps` returns the audio and per-character timings in the
+same response, so there is no forced alignment step. Korean is written in syllable blocks, which
+makes a character timestamp a syllable timestamp, and a syllable's mouth shape is carried by its
+vowel: the 중성 maps to one of five shapes (AA/EH/OH/OO/EE), and ㅁ/ㅂ/ㅃ/ㅍ close the lips at the
+head or the tail of the block. `visemes.json` holds the segments and the interpolation keys; it
+names no renderer, so the same timeline can drive a morph-target rig, a 2D mouth swap or a
+compositor.
+
 ## Tests
 
 ```bash

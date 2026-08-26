@@ -3,6 +3,27 @@
 All notable changes to codex-auto3d. Format loosely follows Keep a Changelog; versions are the
 `__version__` in `auto3d/__init__.py`.
 
+## [0.4.0] — 2026-08-26
+
+### Added
+
+- `lipsync/` — speech to mouth shapes, so a generated model can be made to talk. Typecast's
+  `/v1/text-to-speech/with-timestamps` returns the audio *and* per-character timings in one
+  response, which removes the hard half of lip-sync (no forced alignment, no phoneme recogniser).
+  Korean is written in syllable blocks, so a character timestamp is a syllable timestamp:
+  `lipsync.visemes` decomposes each block into 초성/중성/종성 and maps the 중성 to one of five
+  mouth shapes (AA/EH/OH/OO/EE) plus a closure, with ㅁ/ㅂ/ㅃ/ㅍ forcing the lips shut at the head
+  or tail of the syllable — a character that stays open through "엄마" reads as broken.
+  `lipsync.typecast` is the client (standard library, `X-API-KEY`, console ids normalised to the
+  `tc_` form the API wants).
+- `tools/lipsync.py`: `voices` lists what a key can use, `say` writes `speech.wav`,
+  `timestamps.json` (the API's own timings, unmodified) and `visemes.json` — a timeline of
+  segments plus interpolation keys, deliberately independent of any renderer so the same file can
+  drive a Three.js morph rig, a Lottie mouth swap or a compositor.
+- 23 tests covering the jamo split, each vowel group, the w-diphthongs, bilabial closures at both
+  ends of a syllable, pause versus co-articulation, timeline tiling, and the client against
+  recorded responses — none of which need an API key.
+
 ## [0.3.0] — 2026-08-26
 
 Fixes found by the first real character build (a supplied-reference mascot, blocked at blockout

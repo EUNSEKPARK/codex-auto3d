@@ -148,6 +148,28 @@ python3 auto3d.py batch --file examples/prompts.example.csv
 | `list` | 작업 목록과 상태 |
 | `prompt -p "..."` | 이미지 프롬프트만 작성해 보기 (크레딧 소모 없음) |
 
+## 3.5 말하게 만들기 (`lipsync/`)
+
+생성된 모델이 말을 하려면 **오디오 + 입모양 타임라인**이 필요합니다. 타입캐스트의
+`/v1/text-to-speech/with-timestamps` 는 오디오와 글자 단위 타임스탬프를 한 응답에 같이 주기 때문에
+강제 정렬(forced alignment)이나 음소 인식기 없이 립싱크가 됩니다.
+
+```bash
+export TYPECAST_API_KEY=...
+python3 tools/lipsync.py voices --filter 진서
+python3 tools/lipsync.py say --voice 65bb3a1976b69213594357fc \
+    --text "안녕하세요, 오늘도 좋은 하루 보내세요." --out work/speech/greeting
+```
+
+한글은 음절 단위로 적히므로 **글자 타임스탬프가 곧 음절 타임스탬프**이고, 음절의 입모양은 사실상
+중성이 결정합니다. `lipsync.visemes` 가 각 블록을 초성/중성/종성으로 분해해 중성을 다섯 가지 입모양
+(AA·EH·OH·OO·EE)에 대응시키고, ㅁ/ㅂ/ㅃ/ㅍ 는 음절의 앞이나 뒤에서 입을 닫습니다("엄마"에서 입이
+계속 벌어져 있으면 바로 어색하게 보입니다).
+
+산출물은 `speech.wav`, `timestamps.json`(API 원본 타이밍 그대로), `visemes.json`(구간 + 보간 키)
+입니다. `visemes.json` 은 렌더러를 특정하지 않아서 Three.js 모프 리그·2D 입모양 교체·컴포지터 어디에나
+그대로 물릴 수 있습니다.
+
 ## 4. 결과물 위치
 
 `work/auto3d/<날짜-시각>-<영문슬러그>/` (work/는 git에서 무시됨)
