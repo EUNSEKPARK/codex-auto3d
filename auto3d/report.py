@@ -167,8 +167,9 @@ def write_job_report(job: Job, settings: Settings) -> Path:
     <dt>중단 사유</dt><dd>{_esc(data.get('stopReason') or '-')}</dd>
   </dl></div>
   <div class="card"><h3>Codex 사용량</h3><dl class="kv">
-    <dt>입력 토큰</dt><dd>{usage.get('input_tokens', 0):,}</dd>
+    <dt>신규 입력 토큰</dt><dd>{max(0, usage.get('input_tokens', 0) - usage.get('cached_input_tokens', 0)):,}</dd>
     <dt>캐시 입력</dt><dd>{usage.get('cached_input_tokens', 0):,}</dd>
+    <dt>입력 합계</dt><dd>{usage.get('input_tokens', 0):,}</dd>
     <dt>출력 토큰</dt><dd>{usage.get('output_tokens', 0):,}</dd>
     <dt>턴 수</dt><dd>{len(data['turns'])}</dd>
     <dt>이미지 백엔드</dt><dd>{_esc(data['image'].get('backend'))} / {_esc(data['settings'].get('image_model'))}</dd>

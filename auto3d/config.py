@@ -39,6 +39,10 @@ DEFAULTS: dict[str, Any] = {
     "sandbox": "workspace-write",  # workspace-write | danger-full-access
     "network_in_sandbox": False,
     "turn_timeout_min": 60,
+    # The first build turn does intake, assessment, detail inventory, spec authoring, strict
+    # validation and the blockout factory in one go. A character run measured over 60 minutes and
+    # was killed mid-flight; it only survived because the factory happened to be written already.
+    "first_turn_timeout_min": 120,
     "job_timeout_min": 300,
     # prompt authoring
     "prompt_author": "codex",  # codex | template
@@ -58,8 +62,11 @@ DEFAULTS: dict[str, Any] = {
     "quality": "standard",  # draft | standard | full
     "complexity": "auto",  # auto | simple | moderate | complex | ultra-complex
     "max_review_turns": 12,
-    "max_corrections_per_pass": 3,
-    "max_corrections_total": 6,
+    # A character blockout has to converge silhouette AND proportion before it can pass; 3 per
+    # pass hard-stopped a run that was still improving (0.43 → 0.62 fidelity). max_review_turns
+    # is the real ceiling on cost, so these can be generous.
+    "max_corrections_per_pass": 5,
+    "max_corrections_total": 10,
     "target_triangles": 60000,
     # preview / capture
     "viewport": [900, 900],

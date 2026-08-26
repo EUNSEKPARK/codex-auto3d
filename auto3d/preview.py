@@ -11,6 +11,7 @@ the evidence files they consume, then summarises their verdicts for the review t
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ from .util import (
     FORGE,
     INTEGRATION_ROOT,
     REPO_ROOT,
+    SKILL_ROOT,
     debug,
     log,
     parse_json_output,
@@ -217,6 +219,109 @@ def write_preview_html(bundle: Path, config: dict[str, Any], out_html: Path) -> 
     )
     write_text(out_html, html)
     return out_html
+
+
+# ---------------------------------------------------------------------------
+# framing calibration
+# ---------------------------------------------------------------------------
+
+DEFAULT_MARGIN = 1.12
+# The Tier-1 gate fails above a scale delta of 0.08; stop once comfortably inside it.
+FRAMING_TOLERANCE = 0.04
+MARGIN_BOUNDS = (0.35, 3.0)
+
+
+def _tier1_module():
+    """The Tier-1 gate's own silhouette code. Calibrating against a different definition of
+    "size" than the gate's would be pointless — the gate is the thing that has to pass."""
+    path = str(SKILL_ROOT / "forge" / "stage4_review")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import diagnose_render  # noqa: PLC0415
+
+    return diagnose_render
+
+
+def framing_area_ratio(reference: Path, render: Path) -> float | None:
+    """Render silhouette bbox area ÷ reference silhouette bbox area, or None when either mask is
+    unusable. 1.0 means the subject fills the frame exactly as it does in the reference."""
+    try:
+        tier1 = _tier1_module()
+        reference_mask, reference_warnings = tier1.load_mask(Path(reference))
+        render_mask, render_warnings = tier1.load_mask(Path(render))
+        for name, mask, warnings in (("reference", reference_mask, reference_warnings), ("render", render_mask, render_warnings)):
+            # a blank plate, or a frame the mask read inside-out, has no silhouette to measure —
+            # both come back as "everything is subject", which would look like a perfect match
+            coverage = sum(1 for cell in mask if cell) / max(1, len(mask))
+            if tier1.mask_is_inverted(warnings) or not 0.005 <= coverage <= 0.95:
+                debug(f"framing: {name} has no usable silhouette (coverage {coverage:.3f}, warnings {warnings})")
+                return None
+        _rx, _ry, reference_w, reference_h = tier1.bbox_of(reference_mask)
+        _dx, _dy, render_w, render_h = tier1.bbox_of(render_mask)
+    except Exception as exc:  # noqa: BLE001 — calibration is best-effort, never fatal
+        debug(f"framing: could not measure the silhouettes ({exc})")
+        return None
+    reference_area, render_area = reference_w * reference_h, render_w * render_h
+    if reference_area <= 0 or render_area <= 0:
+        return None
+    return render_area / reference_area
+
+
+def calibrate_margin(
+    *,
+    render_html: Any,
+    hero: dict[str, float],
+    reference: Path,
+    out_dir: Path,
+    settings: Settings,
+    rounds: int = 2,
+) -> tuple[float, dict[str, Any]]:
+    """Find the camera margin that frames the model the way the reference frames the subject.
+
+    Apparent size is inversely proportional to camera distance, and distance is proportional to
+    the margin, so the silhouette's bbox area scales as 1/margin² — one measurement gives the
+    correction and a second pass covers the perspective camera's non-linearity.
+
+    This matters more than it looks. With the margin fixed at 1.12 a supplied 1024² reference
+    rendered 33% under scale; Tier-1 then failed on the framing alone every turn, and the review
+    turns spent their correction budget chasing the pipeline instead of the model's shape.
+    """
+    probe_dir = out_dir / "framing"
+    probe_html = probe_dir / "probe.html"
+    margin = DEFAULT_MARGIN
+    history: list[dict[str, Any]] = []
+    verified = False
+    for attempt in range(1, max(1, rounds) + 1):
+        try:
+            html = render_html(margin, probe_html)
+            run_capture(
+                html,
+                probe_dir,
+                [{"id": "hero", "role": "reference-match", "azimuth": float(hero["azimuth"]), "elevation": float(hero["elevation"])}],
+                settings,
+                meshes_out=None,
+            )
+        except Auto3DError as exc:
+            debug(f"framing: probe capture failed ({exc})")
+            break
+        ratio = framing_area_ratio(reference, probe_dir / "hero.png")
+        delta = abs(1.0 - ratio) if ratio is not None else None
+        history.append({"attempt": attempt, "margin": round(margin, 4), "scaleDelta": round(delta, 4) if delta is not None else None})
+        if ratio is None:
+            break
+        if delta is not None and delta <= FRAMING_TOLERANCE:
+            verified = True
+            break
+        margin = min(max(margin * math.sqrt(ratio), MARGIN_BOUNDS[0]), MARGIN_BOUNDS[1])
+    try:
+        probe_html.unlink()
+    except OSError:
+        pass
+    if history and history[0].get("scaleDelta") is not None:
+        first, last = history[0]["scaleDelta"], history[-1].get("scaleDelta")
+        tail = f" → {last:.3f}" if last is not None and len(history) > 1 else ""
+        log(f"preview: framing calibrated — margin {DEFAULT_MARGIN:.2f} → {margin:.3f} (scale delta {first:.3f}{tail})")
+    return margin, {"margin": round(margin, 4), "source": "calibrated", "verified": verified, "history": history}
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +583,7 @@ def render_factory(
     character: bool = False,
     title: str | None = None,
     history_tag: str | None = None,
+    margin: float | None = None,
 ) -> dict[str, Any]:
     """Build + capture + gate one factory. Returns the capture summary (also written to
     out_dir/capture.json)."""
@@ -496,18 +602,34 @@ def render_factory(
     if tsc_info.get("available") and not tsc_info.get("ok"):
         log(f"preview: tsc reported {tsc_info.get('errorCount')} error(s) (non-blocking)", level="warn")
 
-    config = {
-        **exports.as_config(),
-        "title": title or exports.type_name,
-        "passId": pass_id,
-        "background": settings.background,
-        "hero": hero_cam,
-        "views": {name: dict(cam) for name, cam in VIEW_CAMERAS.items()} | {"hero": hero_cam},
-        "fovDegrees": 35,
-        "margin": 1.12,
-        "groundShadow": True,
-    }
-    html = write_preview_html(bundle, config, out_dir / "preview.html")
+    def render_html(margin_value: float, path: Path) -> Path:
+        config = {
+            **exports.as_config(),
+            "title": title or exports.type_name,
+            "passId": pass_id,
+            "background": settings.background,
+            "hero": hero_cam,
+            "views": {name: dict(cam) for name, cam in VIEW_CAMERAS.items()} | {"hero": hero_cam},
+            "fovDegrees": 35,
+            "margin": margin_value,
+            "groundShadow": True,
+        }
+        return write_preview_html(bundle, config, path)
+
+    # The reference decides the framing: a render that sits at a different scale fails Tier-1 on
+    # that alone, however good the geometry is. `margin` is passed back in by the caller after the
+    # first render so the probe runs once per job, not once per turn.
+    if margin is not None:
+        margin_value = float(margin)
+        framing = {"margin": round(margin_value, 4), "source": "given", "verified": True, "history": []}
+    elif reference is not None:
+        margin_value, framing = calibrate_margin(
+            render_html=render_html, hero=hero_cam, reference=reference, out_dir=out_dir, settings=settings
+        )
+    else:
+        margin_value = DEFAULT_MARGIN
+        framing = {"margin": margin_value, "source": "default", "verified": False, "history": []}
+    html = render_html(margin_value, out_dir / "preview.html")
     # Interactive copy with the bundle shared (smaller than duplicating): preview.html already
     # works in both modes, capture mode is selected by ?capture=1.
 
@@ -556,6 +678,7 @@ def render_factory(
         "previewHtml": relpath(html),
         "bundleBytes": bundle_info.get("bytes"),
         "hero": hero_cam,
+        "framing": framing,
         "viewport": list(settings.viewport),
         "captures": {
             item["id"]: {

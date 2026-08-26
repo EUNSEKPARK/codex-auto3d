@@ -112,6 +112,12 @@ python3 auto3d.py run --reference work/refs/hero.png \
     --reference-camera 35,0 --profile character --quality standard
 ```
 
+The first render of a job also **calibrates the camera framing against the reference**: one probe
+capture, measured with the Tier-1 gate's own silhouette code, then the margin corrected so the
+model fills the frame the way the subject does (bbox area goes as 1/margin²). Without it a render
+sat a third under the reference's scale and the scale gate failed on framing alone, burning review
+turns. It costs about 20 seconds, once per job, and is cached on the job.
+
 `--reference` takes a PNG or JPEG; `--view NAME=PATH` (front|side|back|top) adds the other angles,
 and each goes through the same admission gate as a generated reference — a view that is a
 near-duplicate of the hero is dropped rather than handed to the model as an angle it is not.
@@ -161,8 +167,8 @@ codex/*.events.jsonl               full JSONL event logs per Codex turn (command
 | build start | follow `./SKILL.md`: state init → analysis → assessment → detail inventory → spec → strict validate → blockout factory | workspace-write, no network | `TURN_SCHEMA` `stage=factory-ready` |
 | review N | comparison sheet attached with `-i`, gate summary, exact `append_review.py` flags | resumed thread | `factory-ready` (next pass / refined) · `done` · `blocked` |
 
-Budgets: `max_review_turns` (default 12), `state.py --max-per-pass 3 --max-total 6`, per-turn and
-per-job timeouts. Exhaustion ends in a final review-only turn and a `partial`/`blocked` job, never a
+Budgets: `max_review_turns` (default 12), `state.py --max-per-pass 5 --max-total 10`, a per-turn
+timeout plus a larger `first_turn_timeout_min` for the intake/spec turn, and a per-job timeout. Exhaustion ends in a final review-only turn and a `partial`/`blocked` job, never a
 silent stop. A `blocked` before any factory exists gets one automatic "deepen the spec" retry.
 
 ## Tests

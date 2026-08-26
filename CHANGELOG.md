@@ -3,6 +3,35 @@
 All notable changes to codex-auto3d. Format loosely follows Keep a Changelog; versions are the
 `__version__` in `auto3d/__init__.py`.
 
+## [0.3.0] — 2026-08-26
+
+Fixes found by the first real character build (a supplied-reference mascot, blocked at blockout
+with fidelity 0.62 after 1h45m).
+
+### Fixed
+
+- **Render framing is calibrated against the reference** instead of using a fixed camera margin.
+  The old constant put a supplied 1024² reference's render 33% under scale, so the Tier-1 scale
+  gate failed on the framing alone every turn and the review turns spent their correction budget
+  on the pipeline rather than the model. `render_factory` now probes one hero capture, measures
+  the silhouette bbox against the reference with the gate's own `load_mask`/`bbox_of`, and
+  corrects the margin (bbox area goes as 1/margin²): measured 0.337 → 0.021 scale delta in two
+  probes, ~20s once per job. The result is cached on the job as `framingMargin`, and reported in
+  `capture.json` under `framing`.
+- **Token accounting no longer multiplies.** Codex reports usage for the whole thread, so every
+  resumed turn repeats what the earlier turns already reported; summing them made one build
+  thread read as 113.8M input tokens when its fresh input was about 1M. Usage is now recorded as
+  the growth per thread, and `list`/`report.html` separate new input from cached.
+
+### Changed
+
+- `max_corrections_per_pass` 3 → 5 and `max_corrections_total` 6 → 10. A character blockout has
+  to converge silhouette and proportion before it can pass; 3 hard-stopped a run that was still
+  improving. `max_review_turns` remains the real ceiling on cost.
+- New `first_turn_timeout_min` (default 120): the first build turn does intake, assessment,
+  detail inventory, spec authoring, strict validation and the blockout factory in one turn, and
+  a character run exceeded the 60-minute per-turn budget mid-flight.
+
 ## [0.2.0] — 2026-08-26
 
 ### Added

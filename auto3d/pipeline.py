@@ -155,8 +155,28 @@ class Pipeline:
     def _turn_timeout(self) -> float:
         return max(120.0, min(self.settings.turn_timeout_min * 60, self._time_left()))
 
+    def _first_turn_timeout(self) -> float:
+        """Intake + assessment + detail inventory + spec + strict validation + blockout factory
+        all happen in one turn; the normal per-turn budget is not meant for that."""
+        minutes = float(self.settings.get("first_turn_timeout_min") or self.settings.turn_timeout_min)
+        return max(120.0, min(minutes * 60, self._time_left()))
+
     def _record_usage(self, result: CodexResult) -> None:
-        self.job.add_usage(result.usage)
+        """Codex reports usage for the whole THREAD, so a resumed turn repeats everything the
+        earlier turns already reported. Adding those numbers up counted this run's build thread
+        three times over (113.8M "input tokens" for a job whose fresh input was about 1M). Record
+        the growth instead, and keep the last cumulative reading per thread to grow from."""
+        usage = {key: value for key, value in (result.usage or {}).items() if isinstance(value, int)}
+        thread = result.thread_id
+        if usage and thread:
+            seen = self.job.state.setdefault("usageThreads", {})
+            previous = seen.get(thread) or {}
+            delta = {key: value - int(previous.get(key, 0)) for key, value in usage.items()}
+            seen[thread] = usage
+            # a counter going backwards means this turn was not cumulative after all — take it as is
+            if all(value >= 0 for value in delta.values()):
+                usage = delta
+        self.job.add_usage(usage)
 
     # ------------------------------------------------------------------ run
     def run(self, *, only: str | None = None, until: str | None = None) -> str:
@@ -609,7 +629,14 @@ class Pipeline:
                 factory_rel=factory_rel,
                 language=self.settings.language,
             )
-            result = self._codex_turn(text, label=f"build-{turn_index:02d}", images=images, schema=schema_path, resume=None)
+            result = self._codex_turn(
+                text,
+                label=f"build-{turn_index:02d}",
+                images=images,
+                schema=schema_path,
+                resume=None,
+                timeout_s=self._first_turn_timeout(),
+            )
             thread_id = result.thread_id or thread_id
             record["threadId"] = thread_id
             last = self._register_turn(record, turn_index, "start", result)
@@ -767,7 +794,16 @@ class Pipeline:
         log(f"stage build: {outcome} — passes completed {progress.get('completedPasses')}, latest fidelity {progress.get('latestFidelity')}", level="ok" if outcome == "completed" else "warn")
 
     # ------------------------------------------------------------------ build helpers
-    def _codex_turn(self, text: str, *, label: str, images: list[Path], schema: Path, resume: str | None) -> CodexResult:
+    def _codex_turn(
+        self,
+        text: str,
+        *,
+        label: str,
+        images: list[Path],
+        schema: Path,
+        resume: str | None,
+        timeout_s: float | None = None,
+    ) -> CodexResult:
         result = run_codex(
             self.settings,
             text,
@@ -781,7 +817,7 @@ class Pipeline:
             sandbox=self.settings.sandbox,
             network=self.settings.network_in_sandbox,
             cwd=REPO_ROOT,
-            timeout_s=self._turn_timeout(),
+            timeout_s=timeout_s if timeout_s is not None else self._turn_timeout(),
         )
         self._record_usage(result)
         if result.timed_out:
@@ -864,6 +900,7 @@ class Pipeline:
                 character=profile == "character",
                 title=subject,
                 history_tag=tag,
+                margin=self.job.state.get("framingMargin"),
             )
         except Auto3DError as exc:
             log(f"render failed: {exc}", level="warn")
@@ -872,6 +909,12 @@ class Pipeline:
             self.job.save()
             return None
         self.job.stage("build")["lastRenderError"] = None
+        framing = capture.get("framing") or {}
+        if framing.get("source") == "calibrated" and framing.get("margin"):
+            # keep the calibrated framing for every later render of this job: the reference does
+            # not change, so re-probing each turn would only cost time
+            self.job.state["framingMargin"] = float(framing["margin"])
+            self.job.stage("build")["framing"] = framing
         self.job.stage("build").setdefault("renders", []).append(
             {
                 "tag": tag,
@@ -1047,7 +1090,11 @@ def describe_job(job: Job) -> str:
         f"subject: {job.state.get('subject')}",
         f"passes: {', '.join(progress.get('completedPasses') or []) or 'none'} (target {build.get('targetPass')})",
         f"fidelity: {progress.get('latestFidelity')}",
-        f"tokens: in {usage.get('input_tokens', 0):,} / out {usage.get('output_tokens', 0):,}",
+        # cached input is re-read context, not new work: showing it inside one total made a job
+        # look ~40x more expensive than it was
+        f"tokens: in {usage.get('input_tokens', 0):,} "
+        f"({max(0, usage.get('input_tokens', 0) - usage.get('cached_input_tokens', 0)):,} new, "
+        f"{usage.get('cached_input_tokens', 0):,} cached) / out {usage.get('output_tokens', 0):,}",
         f"elapsed: {human_duration(build.get('elapsedSec') or 0)}",
     ]
     artifacts = job.state.get("artifacts") or {}
